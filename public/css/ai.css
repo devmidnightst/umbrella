@@ -1643,3 +1643,11 @@
 		transition: none;
 	}
 }
+
+.aic-box-blocked {
+	margin: 0;
+	padding: 12px 14px;
+	border-top: 1px solid var(--a-line);
+	font-size: 0.8rem;
+	color: var(--a-muted);
+}

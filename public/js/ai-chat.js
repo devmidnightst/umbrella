@@ -203,10 +203,12 @@ function splitThink(raw) {
 }
 
 function visibleText(text) {
-	const at = text.lastIndexOf(TOOL_START);
-	if (at !== -1 && !/<\/tool\s*>/i.test(text.slice(at))) return text.slice(0, at);
-	for (let n = Math.min(TOOL_START.length - 1, text.length); n > 0; n--) {
-		if (TOOL_START.startsWith(text.slice(-n))) return text.slice(0, -n);
+	let open = -1;
+	for (const m of text.matchAll(/<tool(?=[\s>])/gi)) open = m.index;
+	if (open !== -1 && !/<\/tool\s*>/i.test(text.slice(open))) return text.slice(0, open);
+	const tail = text.slice(-TOOL_START.length).toLowerCase();
+	for (let n = Math.min(TOOL_START.length, tail.length); n > 0; n--) {
+		if (TOOL_START.startsWith(tail.slice(-n))) return text.slice(0, -n);
 	}
 	return text;
 }
@@ -295,65 +297,113 @@ export function mountAiChat(root) {
 
 	let account = null;
 	const dirty = new Set();
+	const inflight = new Map();
 	let syncTimer = 0;
 
 	const save = () => {
 		try {
-			state.chats = state.chats.slice(0, MAX_CHATS);
-			const local = account ? state.chats.filter((c) => c.local) : state.chats;
-			localStorage.setItem(STORE_KEY, JSON.stringify({ ...state, chats: local.map(persistable) }));
+			if (!account) state.chats = state.chats.slice(0, MAX_CHATS);
+			const local = account ? state.chats.filter((c) => c.local || dirty.has(c) || inflight.has(c)) : state.chats;
+			localStorage.setItem(STORE_KEY, JSON.stringify({ ...state, chats: local.slice(0, MAX_CHATS).map(persistable) }));
 		} catch {}
 	};
 
 	const touch = (chat) => {
+		if (account && !chat.local) {
+			dirty.add(chat);
+			clearTimeout(syncTimer);
+			syncTimer = setTimeout(flushSync, 600);
+		}
 		save();
-		if (!account || chat.local) return;
-		dirty.add(chat);
-		clearTimeout(syncTimer);
-		syncTimer = setTimeout(flushSync, 600);
 	};
 
+	function chatBody(chat) {
+		return JSON.stringify({ title: chat.title, updated: chat.updated, base: chat.synced ?? null, messages: persistable(chat).messages });
+	}
+
+	function signedOut() {
+		account = null;
+		dirty.clear();
+		historyWhere.textContent = "chats are saved in this browser. sign in to keep them on your account.";
+		save();
+		renderList();
+	}
+
 	async function putChat(chat) {
-		const r = await fetch(`/api/ai/chats/${chat.id}`, {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: chat.title, updated: chat.updated, messages: persistable(chat).messages }),
-		});
-		if (r.ok) return null;
-		let msg = `couldn't save to your account (${r.status})`;
-		try { msg = (await r.json()).error || msg; } catch {}
-		return { status: r.status, msg };
+		const sent = chat.updated;
+		const r = await fetch(`/api/ai/chats/${chat.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: chatBody(chat) });
+		if (r.ok) {
+			chat.synced = sent;
+			return null;
+		}
+		let j = {};
+		try { j = await r.json(); } catch {}
+		return { status: r.status, msg: j.error || `couldn't save to your account (${r.status})`, chat: j.chat };
+	}
+
+	function splitConflict(chat, remote) {
+		const copy = { ...chat, id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: `${chat.title} (this device)`, synced: undefined };
+		chat.title = remote.title || chat.title;
+		chat.messages = Array.isArray(remote.messages) ? remote.messages : chat.messages;
+		chat.updated = remote.updated || chat.updated;
+		chat.synced = remote.updated;
+		const at = state.chats.indexOf(chat);
+		state.chats.splice(at + 1, 0, copy);
+		dirty.add(copy);
+		if (current === chat && !controller) renderThread();
+		renderList();
+		flash("this chat changed on another device, so this device's version was kept as a copy");
 	}
 
 	async function flushSync() {
 		const jobs = [...dirty];
 		dirty.clear();
 		for (const chat of jobs) {
-			if (!state.chats.includes(chat)) continue;
-			try {
-				const fail = await putChat(chat);
-				if (fail && (fail.status === 413 || fail.status === 507)) {
-					chat.local = true;
-					save();
-					renderList();
-					flash(`${fail.msg}. this chat stays in this browser.`);
-				} else if (fail) {
-					dirty.add(chat);
-				}
-			} catch {
+			if (!account || !state.chats.includes(chat)) continue;
+			if (inflight.has(chat)) {
 				dirty.add(chat);
+				continue;
 			}
+			const job = putChat(chat).catch(() => ({ status: 0 }));
+			inflight.set(chat, job);
+			const fail = await job;
+			inflight.delete(chat);
+			if (!fail) continue;
+			if (fail.status === 401) {
+				signedOut();
+				return;
+			}
+			if (fail.status === 409 && fail.chat) splitConflict(chat, fail.chat);
+			else if (fail.status === 413 || fail.status === 507) {
+				chat.local = true;
+				renderList();
+				flash(`${fail.msg}. this chat stays in this browser.`);
+			} else dirty.add(chat);
 		}
+		save();
 		if (dirty.size) {
 			clearTimeout(syncTimer);
 			syncTimer = setTimeout(flushSync, 8000);
 		}
 	}
 
-	function removeRemote(path) {
+	async function removeRemote(chat) {
 		if (!account) return;
-		fetch(`/api/ai/chats${path}`, { method: "DELETE" }).catch(() => {});
+		if (chat) dirty.delete(chat);
+		if (chat) await inflight.get(chat);
+		else await Promise.all(inflight.values());
+		fetch(`/api/ai/chats${chat ? `/${chat.id}` : ""}`, { method: "DELETE" })
+			.then((r) => { if (r.status === 401) signedOut(); })
+			.catch(() => {});
 	}
+
+	addEventListener("pagehide", () => {
+		if (!account || !dirty.size) return;
+		for (const chat of dirty) {
+			const body = chatBody(chat);
+			if (body.length < 60000) fetch(`/api/ai/chats/${chat.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+		}
+	});
 
 	async function connectAccount() {
 		try {
@@ -365,21 +415,25 @@ export function mountAiChat(root) {
 			account = me.user;
 			const remote = (Array.isArray(chats) ? chats : []).filter((c) => c && typeof c.id === "string" && Array.isArray(c.messages));
 			const ids = new Set(remote.map((c) => c.id));
-			const fromBrowser = state.chats.filter((c) => !ids.has(c.id) && c.messages.length);
 			const byId = new Map(state.chats.map((c) => [c.id, c]));
 			const merged = remote.map((c) => {
 				const mine = byId.get(c.id);
-				if (mine && (mine.updated || 0) > (c.updated || 0)) return mine;
-				return { id: c.id, title: c.title || "Chat", updated: c.updated || 0, messages: c.messages };
+				if (mine && (mine.updated || 0) > (c.updated || 0)) {
+					mine.synced = c.updated;
+					dirty.add(mine);
+					return mine;
+				}
+				return { id: c.id, title: c.title || "Chat", updated: c.updated || 0, synced: c.updated, messages: c.messages };
 			});
-			for (const c of fromBrowser) {
+			for (const c of state.chats) {
+				if (ids.has(c.id) || !c.messages.length) continue;
 				merged.push(c);
-				dirty.add(c);
+				if (!c.local) dirty.add(c);
 			}
 			const shown = current;
 			if (current && !controller) current = merged.find((c) => c.id === current.id) ?? current;
 			state.chats = merged.sort((a, b) => (b.updated || 0) - (a.updated || 0));
-			if (current && !state.chats.includes(current)) state.chats.unshift(current);
+			if (current && current.messages.length && !state.chats.includes(current)) state.chats.unshift(current);
 			historyWhere.textContent = `chats are saved to your account (${account.username}), so they follow you to any device.`;
 			save();
 			renderList();
@@ -732,7 +786,7 @@ export function mountAiChat(root) {
 		state.chats = state.chats.filter((c) => c !== chat);
 		dirty.delete(chat);
 		save();
-		if (!chat.local) removeRemote(`/${chat.id}`);
+		removeRemote(chat);
 		if (chat === current) newChat();
 		else renderList();
 	}
@@ -1007,7 +1061,7 @@ export function mountAiChat(root) {
 			reader.cancel().catch(() => {});
 			if (tool) round.abort();
 			const split = splitThink(raw);
-			return { think: reasoning + split.think, text: tool ? tool.before : split.text, tool };
+			return { think: reasoning + split.think, text: tool ? tool.before : visibleText(split.text), tool };
 		} finally {
 			signal.removeEventListener("abort", stop);
 		}
@@ -1118,7 +1172,8 @@ export function mountAiChat(root) {
 
 		let think = null;
 		let thinkStarted = 0;
-		const priorThink = () => reply.thinking || "";
+		let thoughts = "";
+		const joinText = (a, b) => (a && b ? `${a}\n\n${b.replace(/^\s+/, "")}` : a || b);
 		let base = "";
 		let frame = 0;
 		let latest = null;
@@ -1131,15 +1186,21 @@ export function mountAiChat(root) {
 					think = thinkNode({ thinking: "" }, true);
 					activity.append(think);
 					thinkStarted = performance.now();
+				} else if (!think.classList.contains("live") && !tx) {
+					think.classList.add("live");
+					think._label.classList.add("aic-shimmer");
+					think._label.textContent = thinkLabel(reply, true);
+					setFold(think, true);
+					thinkStarted = performance.now();
 				}
-				think._text.textContent = priorThink() + t;
+				think._text.textContent = joinText(thoughts, t);
 				think._text.scrollTop = think._text.scrollHeight;
 				status.hidden = true;
 			}
 			if (tx) {
 				status.hidden = true;
 				if (think?.classList.contains("live")) endThink();
-				reply.content = base + tx;
+				reply.content = joinText(base, tx);
 				body.innerHTML = md(reply.content, reply.sources, true);
 			} else if (!thinking && !t) {
 				status.hidden = false;
@@ -1191,16 +1252,17 @@ export function mountAiChat(root) {
 				});
 				if (frame) { cancelAnimationFrame(frame); frame = 0; }
 				if (latest) paint();
-				if (out.think) {
-					reply.thinking = (priorThink() + out.think).slice(-30000);
-					endThink();
-					think = null;
-				}
-				const said = out.text.trim();
-				if (said) base = `${base}${base ? "\n\n" : ""}${said}`;
+				latest = null;
+				if (out.think) thoughts = joinText(thoughts, out.think).slice(-30000);
+				endThink();
+				base = joinText(base, out.text.trim());
 				reply.content = base;
 				body.innerHTML = md(reply.content, reply.sources, true);
 				if (!out.tool) break;
+				if (round >= MAX_TOOL_ROUNDS) {
+					reply.cutNote = "The model kept asking for more tools, so the answer stopped here.";
+					break;
+				}
 				if (out.tool.name === "web_search" && !canSearch) {
 					apiMessages.push({ role: "assistant", content: `${out.text}${out.tool.tag}` }, { role: "user", content: "web_search is turned off for this message. Answer from what you know." });
 					continue;
@@ -1234,6 +1296,9 @@ export function mountAiChat(root) {
 			}
 		} finally {
 			if (frame) cancelAnimationFrame(frame);
+			if (latest?.think) thoughts = joinText(thoughts, latest.think).slice(-30000);
+			if (latest?.text && !reply.error && !reply.stopped) reply.content = joinText(base, latest.text);
+			if (thoughts) reply.thinking = thoughts;
 			endThink();
 			scroller.removeEventListener("scroll", onScroll);
 			if (controller?.signal === signal) controller = null;
@@ -1309,7 +1374,7 @@ export function mountAiChat(root) {
 		state.chats = [];
 		dirty.clear();
 		save();
-		removeRemote("");
+		removeRemote(null);
 		newChat();
 		settingsModal.hidden = true;
 	});

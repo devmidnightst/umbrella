@@ -47,7 +47,7 @@ test("a saved chat comes back, and can be updated and deleted", async () => {
 	assert.deepEqual((await r.json()).chats, []);
 	r = await put("abc123", { title: "hello", updated: 5, messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "yo", steps: [{ type: "run", code: "1+1", output: "=> 2" }] }, { role: "system", content: "dropped" }] });
 	assert.equal(r.status, 200);
-	r = await put("abc123", { title: "hello again", updated: 6, messages: [{ role: "user", content: "hi" }] });
+	r = await put("abc123", { title: "hello again", updated: 6, base: 5, messages: [{ role: "user", content: "hi" }] });
 	assert.equal(r.status, 200);
 	r = await fetch(base, { headers: { cookie } });
 	const { chats, usage } = await r.json();
@@ -69,6 +69,17 @@ test("assistant steps and thinking are kept", async () => {
 	await fetch(base, { method: "DELETE", headers: { cookie } });
 });
 
+test("a device that missed a newer save gets a conflict with the newer copy", async () => {
+	assert.equal((await put("sync01", { title: "a", updated: 10, messages: [{ role: "user", content: "one" }] })).status, 200);
+	assert.equal((await put("sync01", { title: "a", updated: 20, base: 10, messages: [{ role: "user", content: "two" }] })).status, 200);
+	const stale = await put("sync01", { title: "a", updated: 15, base: 10, messages: [{ role: "user", content: "stale" }] });
+	assert.equal(stale.status, 409);
+	const body = await stale.json();
+	assert.equal(body.chat.messages[0].content, "two");
+	assert.equal((await put("sync01", { title: "b", updated: 30, messages: [] })).status, 409);
+	await fetch(base, { method: "DELETE", headers: { cookie } });
+});
+
 test("bad ids and cross site writes are refused", async () => {
 	assert.equal((await put("../x", { messages: [] })).status, 404);
 	assert.equal((await put("no!", { messages: [] })).status, 400);
@@ -87,7 +98,8 @@ test("storage limits answer 507 and 413", async () => {
 		assert.equal((await put("lim001", { messages: [] })).status, 200);
 		assert.equal((await put("lim002", { messages: [] })).status, 200);
 		assert.equal((await put("lim003", { messages: [] })).status, 507);
-		assert.equal((await put("lim001", { title: "edit is fine", messages: [] })).status, 200);
+		const first = (await (await fetch(base, { headers: { cookie } })).json()).chats.find((c) => c.id === "lim001");
+		assert.equal((await put("lim001", { title: "edit is fine", base: first.updated, messages: [] })).status, 200);
 		CHAT_LIMITS.maxChats = 100;
 		CHAT_LIMITS.maxTotalBytes = 400;
 		assert.equal((await put("lim004", { messages: [{ role: "user", content: "x".repeat(500) }] })).status, 507);

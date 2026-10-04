@@ -26,7 +26,8 @@ export const CHAT_LIMITS = {
 const q = {
 	list: db.prepare("SELECT id, title, updated, data FROM ai_chats WHERE user_id = ? ORDER BY updated DESC"),
 	usage: db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM ai_chats WHERE user_id = ?"),
-	sizeOf: db.prepare("SELECT size FROM ai_chats WHERE user_id = ? AND id = ?"),
+	sizeOf: db.prepare("SELECT size, updated FROM ai_chats WHERE user_id = ? AND id = ?"),
+	one: db.prepare("SELECT id, title, updated, data FROM ai_chats WHERE user_id = ? AND id = ?"),
 	put: db.prepare(`INSERT INTO ai_chats (user_id, id, title, updated, size, data) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT (user_id, id) DO UPDATE SET title = excluded.title, updated = excluded.updated, size = excluded.size, data = excluded.data`),
 	del: db.prepare("DELETE FROM ai_chats WHERE user_id = ? AND id = ?"),
@@ -81,15 +82,23 @@ export function createChatRouter() {
 		const data = JSON.stringify(messages);
 		const size = Buffer.byteLength(data) + Buffer.byteLength(title);
 		if (size > CHAT_LIMITS.maxChatBytes) return res.status(413).json({ error: "this chat is too big to save to your account" });
+		const base = Number.isFinite(req.body?.base) ? req.body.base : null;
 		const result = db.transaction(() => {
 			const usage = q.usage.get(req.user.id);
 			const old = q.sizeOf.get(req.user.id, id);
+			// another device saved this chat after the version this one started from
+			if (old && (base === null || old.updated > base)) {
+				const row = q.one.get(req.user.id, id);
+				let messages = [];
+				try { messages = JSON.parse(row.data); } catch {}
+				return { status: 409, error: "this chat changed on another device", chat: { id, title: row.title, updated: row.updated, messages } };
+			}
 			if (!old && usage.n >= CHAT_LIMITS.maxChats) return { status: 507, error: `you can keep ${CHAT_LIMITS.maxChats} chats on your account, delete some first` };
 			if (usage.bytes - (old?.size ?? 0) + size > CHAT_LIMITS.maxTotalBytes) return { status: 507, error: "your account's chat storage is full, delete some chats first" };
 			q.put.run(req.user.id, id, title, updated, size, data);
 			return null;
 		})();
-		if (result) return res.status(result.status).json({ error: result.error });
+		if (result) return res.status(result.status).json({ error: result.error, chat: result.chat });
 		res.json({ ok: true });
 	});
 

@@ -48,14 +48,14 @@ const RUNNER_DOC = `<!doctype html><meta http-equiv="Content-Security-Policy" co
 const src = ${JSON.stringify(WORKER_SRC)};
 let worker;
 addEventListener("message", (e) => {
-	if (e.source !== parent || typeof e.data?.code !== "string") return;
+	if (worker || e.source !== parent || typeof e.data?.code !== "string") return;
 	try {
 		worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
 	} catch (err) {
 		parent.postMessage({ t: "done", d: { error: "couldn't start the sandbox: " + err.message } }, "*");
 		return;
 	}
-	worker.onmessage = (m) => parent.postMessage(m.data, "*");
+	worker.onmessage = (m) => { if (m.data?.t !== "ready") parent.postMessage(m.data, "*"); };
 	worker.onerror = (m) => { m.preventDefault(); parent.postMessage({ t: "done", d: { error: m.message || "the code crashed" } }, "*"); };
 	worker.postMessage(e.data.code);
 });
@@ -75,6 +75,7 @@ export function runCode(code, { timeout = 6000, signal } = {}) {
 		let size = 0;
 		let cut = false;
 		let finished = false;
+		let sent = false;
 		const finish = (result) => {
 			if (finished) return;
 			finished = true;
@@ -88,7 +89,11 @@ export function runCode(code, { timeout = 6000, signal } = {}) {
 		const onMessage = (e) => {
 			if (e.source !== frame.contentWindow || !e.data || typeof e.data !== "object") return;
 			const { t, d } = e.data;
-			if (t === "ready") frame.contentWindow.postMessage({ code }, "*");
+			if (t === "ready") {
+				if (sent) return;
+				sent = true;
+				frame.contentWindow.postMessage({ code }, "*");
+			}
 			else if (t === "log") {
 				if (lines.length >= MAX_LINES || size > MAX_LOG) { cut = true; return; }
 				const text = String(d?.text ?? "").slice(0, MAX_LOG - size);
@@ -114,7 +119,7 @@ export function describeRun(result) {
 }
 
 const BOX_HEAD = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${BOX_CSP}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:light dark}html,body{margin:0}body{padding:12px;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}</style>`;
-const BOX_TAIL = `<script>(()=>{let last=0;const post=()=>{const b=document.body;if(!b)return;const cs=getComputedStyle(b);const h=Math.ceil(b.getBoundingClientRect().height+parseFloat(cs.marginTop)+parseFloat(cs.marginBottom));if(h!==last){last=h;parent.postMessage({t:"size",h},"*")}};const ro=new ResizeObserver(post);if(document.body)ro.observe(document.body);addEventListener("load",post);setTimeout(post,50);setTimeout(post,500)})()<\/script>`;
+const BOX_TAIL = `<script>addEventListener("click",(e)=>{const a=e.target.closest&&e.target.closest("a[href]");if(a&&!a.getAttribute("href").startsWith("#"))e.preventDefault()},true);addEventListener("submit",(e)=>e.preventDefault(),true);(()=>{let last=0;const post=()=>{const b=document.body;if(!b)return;const cs=getComputedStyle(b);const h=Math.ceil(b.getBoundingClientRect().height+parseFloat(cs.marginTop)+parseFloat(cs.marginBottom));if(h!==last){last=h;parent.postMessage({t:"size",h},"*")}};const ro=new ResizeObserver(post);if(document.body)ro.observe(document.body);addEventListener("load",post);setTimeout(post,50);setTimeout(post,500)})()<\/script>`;
 
 export function boxFrame(html, { title = "box" } = {}) {
 	const frame = document.createElement("iframe");
@@ -122,7 +127,16 @@ export function boxFrame(html, { title = "box" } = {}) {
 	frame.setAttribute("sandbox", "allow-scripts");
 	frame.setAttribute("title", title);
 	frame.setAttribute("loading", "lazy");
-	frame.srcdoc = BOX_HEAD + String(html).replace(/^\s*<!doctype[^>]*>/i, "") + BOX_TAIL;
+	frame.srcdoc = BOX_HEAD + String(html).replace(/^\s*<!doctype[^>]*>/i, "").replace(/<meta\b[^>]*http-equiv[^>]*>|<base\b[^>]*>/gi, "") + BOX_TAIL;
+	let loads = 0;
+	frame.addEventListener("load", () => {
+		loads += 1;
+		if (loads < 2) return;
+		const note = document.createElement("p");
+		note.className = "aic-box-blocked";
+		note.textContent = "This box tried to open another page, so it was closed.";
+		frame.replaceWith(note);
+	});
 	const onMessage = (e) => {
 		if (!frame.isConnected) { removeEventListener("message", onMessage); return; }
 		if (e.source !== frame.contentWindow || e.data?.t !== "size") return;
