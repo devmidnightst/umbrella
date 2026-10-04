@@ -1,8 +1,2 @@
-const base = require("./ecosystem.config.cjs");
-module.exports = {
-	apps: base.apps.map((app) => ({
-		...app,
-		instances: 4,
-		env: { ...app.env, PORT: 8090 },
-	})),
-};
+// same as ecosystem.config.cjs, kept so `pm2 reload umbrella.config.cjs` keeps working
+module.exports = require("./ecosystem.config.cjs");

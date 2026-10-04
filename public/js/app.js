@@ -11,7 +11,15 @@ const nestedInShell = (() => {
 	try {
 		if (window.top.location.origin !== location.origin) return false;
 		const adopt = window.top.__nc_a3c8;
-		if (typeof adopt === "function" && adopt(window.frameElement, new URLSearchParams(location.search).get("go"))) return true;
+		let w = window;
+		while (w.parent !== w.top) w = w.parent;
+		if (typeof adopt === "function") {
+			if (adopt(w.frameElement, new URLSearchParams(location.search).get("go"))) return true;
+			if (window.top.document.getElementById("frames")) {
+				location.replace("about:blank");
+				return true;
+			}
+		}
 		window.top.location.replace(location.href);
 		return true;
 	} catch {
@@ -539,7 +547,7 @@ function renderEssentials() {
 function openBookmark(url) {
 	const existing = tabs.find((t) => t.url === url && !t.closing);
 	if (existing) return activate(existing);
-	if (active && !active.url) return navigate(url);
+	if (active && !active.url && (!active.type || active.type === "browser")) return navigate(url);
 	navigate(url, { newTab: true });
 }
 
@@ -742,7 +750,9 @@ function closeTab(tab) {
 function navigate(raw, { tab, newTab = false } = {}) {
 	const url = resolveInput(raw);
 	if (!url) return;
-	if (!engine) { toast("engine is still starting up — try again in a moment"); return; }
+	if (!engine) { toast("engine is still starting up, try again in a moment"); return; }
+	const target = tab ?? active;
+	if (target && target.type && target.type !== "browser") newTab = true;
 	if (newTab) {
 		tab = makeTab();
 		tabs.splice(active ? tabs.indexOf(active) + 1 : tabs.length, 0, tab);
@@ -784,6 +794,11 @@ function tabEvents(tab) {
 	return {
 		onUrl(url) {
 			if (!url || url === "about:blank" || !tabs.includes(tab)) return;
+			if ((tab.health || tab.antiAdblock) && originOf(url) !== originOf(tab.url)) {
+				tab.health = null;
+				tab.antiAdblock = null;
+				if (tab === active) hideBanner();
+			}
 			tab.url = url;
 			history.add(url, tab.title);
 			if (tab === active) syncChrome();
@@ -1521,8 +1536,8 @@ function showChangePw() {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ current: fd.get("current"), password: fd.get("password") }),
 			});
-			const data = await res.json();
-			if (!res.ok) throw new Error(data.error);
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
 			okEl.textContent = "password changed";
 			setTimeout(() => renderAccount(), 1200);
 		} catch (ex) {

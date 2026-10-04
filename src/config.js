@@ -46,7 +46,7 @@ const DEFAULT_FILTER_LISTS = [
 export const config = {
 	env: env.NODE_ENV || "production",
 	host: env.HOST || "0.0.0.0",
-	port: int(env.PORT, 8080),
+	port: int(env.PORT, 8090),
 
 	// set when running behind caddy / nginx so req.ip and x-forwarded-* are trusted.
 	// "loopback" trusts 127.0.0.1 and ::1 only, which is right for caddy on the same box.

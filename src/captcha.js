@@ -1,16 +1,5 @@
 import { Router } from "express";
 
-const CAPTCHA_DOMAINS = [
-	"hcaptcha.com",
-	"js.hcaptcha.com",
-	"newassets.hcaptcha.com",
-	"imgs.hcaptcha.com",
-	"challenges.cloudflare.com",
-	"www.google.com/recaptcha",
-	"www.gstatic.com/recaptcha",
-	"www.recaptcha.net",
-];
-
 const SOLVER_BACKENDS = {
 	nopecha: {
 		name: "NopeCHA",
@@ -40,7 +29,7 @@ const SOLVER_BACKENDS = {
 		async solve(type, sitekey, pageurl, apiKey) {
 			const method = type === "hcaptcha" ? "hcaptcha" : type === "turnstile" ? "turnstile" : "userrecaptcha";
 			const createRes = await fetch(
-				`https://2captcha.com/in.php?key=${apiKey}&method=${method}&sitekey=${sitekey}&pageurl=${encodeURIComponent(pageurl)}&json=1`
+				`https://2captcha.com/in.php?key=${encodeURIComponent(apiKey)}&method=${method}&sitekey=${encodeURIComponent(sitekey)}&pageurl=${encodeURIComponent(pageurl)}&json=1`
 			);
 			const created = await createRes.json();
 			if (created.status !== 1) throw new Error(created.request || "failed to create task");
@@ -104,7 +93,11 @@ export function createCaptchaRouter() {
 	const jsonParser = (req, res, next) => {
 		if (!req.headers["content-type"]?.includes("application/json")) return next();
 		let body = "";
-		req.on("data", (chunk) => (body += chunk));
+		req.setEncoding("utf8");
+		req.on("data", (chunk) => {
+			body += chunk;
+			if (body.length > 64 * 1024) req.destroy();
+		});
 		req.on("end", () => {
 			try {
 				req.body = JSON.parse(body);
@@ -131,7 +124,7 @@ export function createCaptchaRouter() {
 		}
 
 		const { type, sitekey, pageurl } = req.body || {};
-		if (!type || !sitekey || !pageurl) {
+		if (typeof type !== "string" || typeof sitekey !== "string" || typeof pageurl !== "string" || !type || !sitekey || !pageurl) {
 			return res.status(400).json({ error: "missing type, sitekey, or pageurl" });
 		}
 
@@ -141,40 +134,6 @@ export function createCaptchaRouter() {
 		} catch (err) {
 			console.error(`[captcha] ${cfg.name} solve failed:`, err.message);
 			res.status(502).json({ error: `solver failed: ${err.message}` });
-		}
-	});
-
-	router.get("/passthrough", async (req, res) => {
-		const url = req.query.url;
-		if (!url) return res.status(400).send("missing url param");
-
-		try {
-			const parsed = new URL(url);
-			const allowed = CAPTCHA_DOMAINS.some((d) => parsed.hostname === d || parsed.hostname.endsWith("." + d));
-			if (!allowed) return res.status(403).send("domain not allowed");
-
-			const upstream = await fetch(url, {
-				headers: {
-					"User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
-					Accept: "*/*",
-					Referer: req.query.referer || "",
-				},
-			});
-
-			const ct = upstream.headers.get("content-type") || "application/javascript";
-			res.setHeader("Content-Type", ct);
-			res.setHeader("Access-Control-Allow-Origin", "*");
-			res.setHeader("Cache-Control", "public, max-age=300");
-
-			const body = await upstream.text();
-			res.send(body);
-		} catch (err) {
-			const msg = err.message || "";
-			if (msg.includes("allowlist") || msg.includes("egress") || msg.includes("ENOTFOUND")) {
-				return res.status(502).send("captcha cdn not reachable from this server (network policy may block it)");
-			}
-			console.error("[captcha] passthrough failed:", msg);
-			res.status(502).send("fetch failed");
 		}
 	});
 

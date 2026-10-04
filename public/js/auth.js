@@ -21,8 +21,8 @@ async function api(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "something went wrong");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `something went wrong (${res.status})`);
   return data;
 }
 

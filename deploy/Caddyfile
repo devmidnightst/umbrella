@@ -1,6 +1,6 @@
 # caddyfile for umbrella behind caddy with on-demand tls.
 #
-# the node server runs on 127.0.0.1:8080 (see ecosystem.config.cjs).
+# the node server runs on 127.0.0.1:8090 (see ecosystem.config.cjs).
 # caddy terminates tls, compresses the big transport bundles and passes
 # websockets (the /wisp/ tunnel) straight through.
 
@@ -8,7 +8,7 @@
 	# before issuing a cert for an unknown hostname, caddy asks umbrella.
 	# umbrella answers 200 only for names in TLS_ALLOWED_DOMAINS / TLS_DOMAINS_FILE.
 	on_demand_tls {
-		ask http://127.0.0.1:8080/api/tls-ask
+		ask http://127.0.0.1:8090/api/tls-ask
 	}
 }
 
@@ -18,7 +18,7 @@
 
 	# caddy proxies websocket upgrades (the /wisp/ tunnel) automatically and
 	# sets x-forwarded-for, which the server trusts from loopback
-	reverse_proxy 127.0.0.1:8080 {
+	reverse_proxy 127.0.0.1:8090 {
 		flush_interval -1
 	}
 

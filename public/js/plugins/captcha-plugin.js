@@ -12,7 +12,7 @@ const CAPTCHA_SCRIPT_PATTERNS = [
 
 const CAPTCHA_SELECTORS = {
 	hcaptcha: [".h-captcha", "[data-hcaptcha-widget-id]", "iframe[src*='hcaptcha']"],
-	recaptcha2: [".g-recaptcha", "[data-sitekey]", "iframe[src*='recaptcha']"],
+	recaptcha2: [".g-recaptcha", "iframe[src*='recaptcha']"],
 	turnstile: [".cf-turnstile", "[data-turnstile-widget-id]", "iframe[src*='turnstile']"],
 };
 
@@ -100,21 +100,21 @@ function createOverlay(win, doc, info) {
 		solveBtn.disabled = true;
 		status.textContent = "checking solver...";
 		try {
-			const check = await win.fetch("/api/captcha/status");
-			const st = await check.json();
+			const check = await fetch("/api/captcha/status");
+			const st = await check.json().catch(() => ({}));
 			if (!st.available) {
 				status.textContent = "no solver configured. set CAPTCHA_SOLVER + CAPTCHA_API_KEY env vars on the server.";
 				solveBtn.disabled = false;
 				return;
 			}
 			status.textContent = `solving with ${st.solver}...`;
-			const res = await win.fetch("/api/captcha/solve", {
+			const res = await fetch("/api/captcha/solve", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ type: info.type, sitekey: info.sitekey, pageurl: info.pageurl }),
 			});
-			const result = await res.json();
-			if (!res.ok) throw new Error(result.error);
+			const result = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(result.error || `request failed (${res.status})`);
 			status.textContent = "solved! injecting token...";
 			injectToken(doc, info.type, result.token);
 			setTimeout(() => overlay.remove(), 2000);
@@ -196,8 +196,10 @@ export class _CP extends ManagedPlugin {
 			const pageurl = client.url.href;
 			const seen = new Set();
 
+			let observer = null;
 			const scan = () => {
 				for (const [type, selectors] of Object.entries(CAPTCHA_SELECTORS)) {
+					if (seen.has(type)) continue;
 					for (const sel of selectors) {
 						try {
 							const el = doc.querySelector(sel);
@@ -209,6 +211,7 @@ export class _CP extends ManagedPlugin {
 						} catch {}
 					}
 				}
+				if (observer && seen.size === Object.keys(CAPTCHA_SELECTORS).length) observer.disconnect();
 			};
 
 			const listen = (target, type, fn) => {
@@ -220,7 +223,8 @@ export class _CP extends ManagedPlugin {
 			listen(win, "DOMContentLoaded", () => {
 				scan();
 				try {
-					new win.MutationObserver(() => scan()).observe(doc.body || doc.documentElement, {
+					observer = new win.MutationObserver(() => scan());
+					observer.observe(doc.body || doc.documentElement, {
 						childList: true,
 						subtree: true,
 					});

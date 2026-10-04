@@ -23,7 +23,12 @@
 		</main>
 		<script>
 		if (window.self !== window.top && /^\/~\/xf\//.test(location.pathname)) {
-			setTimeout(() => location.reload(), 1200);
+			let recent = [];
+			try {
+				recent = JSON.parse(sessionStorage.getItem("_p8q2:404") || "[]").filter((t) => Date.now() - t < 30000);
+				sessionStorage.setItem("_p8q2:404", JSON.stringify([...recent, Date.now()]));
+			} catch {}
+			if (recent.length < 5) setTimeout(() => location.reload(), 1200);
 		}
 		</script>
 	</body>

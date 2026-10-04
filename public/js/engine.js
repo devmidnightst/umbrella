@@ -465,10 +465,18 @@ export async function createEngine(events = {}, onStatus) {
 			if (!tabs.size) await new HttpCachePlugin().bust();
 			controller.cookieJar.clear();
 			await controller.persistCookies();
-			await new Promise((resolve) => {
-				const req = indexedDB.deleteDatabase("__nc_e4b7");
-				req.onsuccess = req.onerror = req.onblocked = () => resolve();
-			});
+			let dbs = [];
+			try {
+				dbs = await indexedDB.databases();
+			} catch {
+			}
+			for (const { name } of dbs) {
+				if (!name || name === "__scramjet_controller" || name.startsWith("scramjet-http-cache")) continue;
+				await new Promise((resolve) => {
+					const req = indexedDB.deleteDatabase(name);
+					req.onsuccess = req.onerror = req.onblocked = () => resolve();
+				});
+			}
 			try {
 				for (const key of Object.keys(localStorage)) {
 					if (!key.startsWith("_p8q2:")) localStorage.removeItem(key);
