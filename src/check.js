@@ -44,6 +44,13 @@ try {
 	bad(`database can't be opened for writing (${err.message}). check who owns the data folder, it must be the user pm2 runs as`);
 }
 try {
+	const { CAP_BYTES, checkKey } = await import("./site-data.js");
+	checkKey();
+	ok(`site data sync key loads (cap ${CAP_BYTES / 1024 / 1024} MB per account)`);
+} catch (err) {
+	bad(`site data sync key: ${err.message}`);
+}
+try {
 	require("bcrypt").hashSync("x", 4);
 	ok("bcrypt loads");
 } catch (err) {
