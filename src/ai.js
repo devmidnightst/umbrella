@@ -1,5 +1,6 @@
 import express from "express";
 import { searchWeb, readPages } from "./web-search.js";
+import { createChatRouter } from "./ai-chats.js";
 
 // set these in .env, never commit a real key
 const AI_BASE = () => (process.env.AI_API_BASE || "https://emis.zxs-is-very.cool").replace(/\/+$/, "");
@@ -92,6 +93,8 @@ export function createAiRouter() {
 			clearTimeout(timer);
 		}
 	});
+
+	router.use("/chats", createChatRouter());
 
 	router.get("/search", async (req, res) => {
 		const q = String(req.query.q || "").slice(0, 2000);
