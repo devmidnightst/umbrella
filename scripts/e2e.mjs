@@ -393,13 +393,24 @@ async function runTabs() {
 		await waitRows(2);
 		pass("alt+w closes the current tab");
 
-		// open tabs only live for the browser session
+		// tabs close when the visitor leaves; a fresh visit starts with one tab and
+		// offers to reopen the site tabs, never the ai or games tabs
+		await page.$eval("#ai-btn", (b) => b.click());
+		await waitRows(3);
+		await page.waitForTimeout(300);
+		await page.goto("about:blank");
 		const fresh = await context.newPage();
 		await fresh.goto(base);
 		await fresh.waitForSelector(".tab-row", { timeout: 30_000 });
 		await fresh.waitForTimeout(500);
 		const freshRows = (await fresh.$$(".tab-row")).length;
 		freshRows === 1 ? pass("a fresh visit starts with one tab") : fail(`a fresh visit opened ${freshRows} tabs`);
+		const offer = await fresh.textContent(".restore-prompt.show span", { timeout: 30_000 });
+		offer === "reopen 2 tabs?" ? pass("a fresh visit offers to reopen the site tabs only") : fail(`restore prompt said ${JSON.stringify(offer)}`);
+		await fresh.click(".restore-prompt.show .restore-yes");
+		await fresh.waitForFunction(() => document.querySelectorAll(".tab-row").length === 2, null, { timeout: 15_000 });
+		const reopened = await fresh.$$eval(".tab-row", (r) => r.map((x) => x.title));
+		reopened.every((u) => u.startsWith("http")) ? pass("reopening brings back the site tabs without ai") : fail(`reopened ${JSON.stringify(reopened)}`);
 		await fresh.close();
 	} catch (err) {
 		fail(`tab checks: ${err.message}`);

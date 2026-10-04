@@ -173,7 +173,7 @@ let pendingRestore = null;
 function writeSession() {
 	clearTimeout(saveTimer);
 	saveTimer = null;
-	const open = tabs.filter((t) => !t.closing && (t.type !== "browser" || t.url)).map(({ id, url, title, type, gameId }) => ({ id, url, title, type, gameId }));
+	const open = tabs.filter((t) => !t.closing && t.type === "browser" && t.url).map(({ id, url, title }) => ({ id, url, title }));
 	const kept = pendingRestore ? pendingRestore.tabs.filter((t) => !open.some((o) => o.id === t.id)) : [];
 	session.save({
 		tabs: [...kept, ...open],
@@ -185,31 +185,15 @@ function saveSession() {
 	saveTimer ??= setTimeout(writeSession, 100);
 }
 
-function reloadedPage() {
-	try {
-		return performance.getEntriesByType("navigation")[0]?.type === "reload";
-	} catch {
-		return false;
-	}
-}
-
 function restoreTab(t) {
-	if (!t || typeof t.id !== "string") return null;
-	if (t.type === "ai") return { ...makeAiTab(), id: t.id };
-	if (t.type === "games") return { ...makeGamesTab(), id: t.id };
-	if (t.type === "game") {
-		if (t.gameId == null) return null;
-		const tab = makeTab({ id: t.id, title: t.title || "game", type: "game" });
-		tab.gameId = t.gameId;
-		return tab;
-	}
-	return typeof t.url === "string" ? makeTab({ id: t.id, url: t.url, title: t.title || "" }) : null;
+	if (!t || typeof t.id !== "string" || typeof t.url !== "string" || !t.url) return null;
+	return makeTab({ id: t.id, url: t.url, title: t.title || "" });
 }
 
 function getSavedSession() {
-	const saved = reloadedPage() ? session.load() : null;
+	const saved = session.load();
 	if (!saved || !Array.isArray(saved.tabs)) return null;
-	const restorable = saved.tabs.filter((t) => t && (t.type === "ai" || t.type === "games" || t.type === "game" || (typeof t.url === "string" && t.url)));
+	const restorable = saved.tabs.filter((t) => t && (!t.type || t.type === "browser") && typeof t.url === "string" && t.url);
 	return restorable.length ? { tabs: restorable, active: saved.active } : null;
 }
 

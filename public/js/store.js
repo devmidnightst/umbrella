@@ -123,20 +123,16 @@ try {
 	localStorage.removeItem(PREFIX + "tabs");
 } catch {}
 
+try {
+	sessionStorage.removeItem(PREFIX + "tabs");
+} catch {
+}
 export const session = {
 	load() {
-		try {
-			const raw = sessionStorage.getItem(PREFIX + "tabs");
-			return raw == null ? null : JSON.parse(raw);
-		} catch {
-			return null;
-		}
+		return read("lasttabs", null);
 	},
 	save(data) {
-		try {
-			sessionStorage.setItem(PREFIX + "tabs", JSON.stringify(data));
-		} catch {
-		}
+		write("lasttabs", data);
 	},
 };
 
