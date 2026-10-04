@@ -1,4 +1,5 @@
 import { createEngine, versionInfo } from "./engine.js";
+import { createSiteSync } from "./site-sync.js";
 import { resolveInput } from "./omnibox.js";
 import { settings, bookmarks, history, session, icons, SEARCH_ENGINES } from "./store.js";
 import { _nrc, _nrp } from "./net-resolver.js";
@@ -1445,6 +1446,59 @@ function renderAbout() {
 }
 
 let currentUser = null;
+let syncState = null;
+
+const siteSync = createSiteSync({
+	getEngine: () => engine,
+	getUser: () => currentUser,
+	busyOrigins: () => {
+		const set = new Set();
+		for (const t of tabs) {
+			try {
+				if (t.type === "browser" && t.url && !t.closing) set.add(new URL(t.url).origin);
+			} catch {
+			}
+		}
+		return set;
+	},
+	onState: (st) => {
+		const prev = syncState;
+		syncState = st;
+		if (st.full && !prev?.full) toast("your account's site data is full (512 MB), new changes stay in this browser", 5000);
+		renderSyncInfo();
+	},
+});
+
+const mb = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${Math.max(0, n)} B`);
+
+function syncLine(st) {
+	if (!st) return "waiting for the first sync";
+	if (st.busy) return "syncing";
+	if (st.error) return `last sync failed: ${st.error}`;
+	if (!st.last) return "waiting for the first sync";
+	const mins = Math.round((Date.now() - st.last) / 60000);
+	return `last synced ${mins < 1 ? "just now" : `${mins} min ago`}`;
+}
+
+function renderSyncInfo() {
+	const box = $("sync-info");
+	if (!box) return;
+	const st = syncState;
+	const cap = st?.cap || 512 * 1024 * 1024;
+	const used = st?.used || 0;
+	const bar = el("div", { class: "sync-bar" }, el("div", { style: `width:${Math.min(100, (used / cap) * 100)}%` }));
+	const notes = [];
+	if (st?.full) notes.push(el("small", { class: "sync-warn" }, "storage is full, delete some site data to keep syncing"));
+	if (st?.skipped?.length) notes.push(el("small", {}, `too big to sync, kept in this browser: ${st.skipped.map((n) => n.replace(/^https?:\/\//, "").replace("@", " / ")).join(", ")}`));
+	box.replaceChildren(
+		el("div", { class: "sync-head" }, el("span", {}, "site data"), el("span", {}, `${mb(used)} of ${mb(cap)}`)),
+		bar,
+		el("small", {}, `cookies, logins and saves from sites you visit follow your account. ${syncLine(st)}.`),
+		...notes,
+		el("button", { disabled: st?.busy || !engine ? "" : undefined, onclick: () => siteSync.sync() }, "sync now")
+	);
+}
+
 async function fetchUser() {
 	try {
 		const res = await fetch("/api/auth/me");
@@ -1477,9 +1531,11 @@ function renderAccount() {
 		el("div", { class: "account-actions", id: "account-actions" },
 			el("button", { onclick: () => showChangePw() }, "change password"),
 			el("button", { class: "danger", onclick: () => doLogout() }, "log out")
-		)
+		),
+		el("div", { class: "sync-info", id: "sync-info" })
 	);
 	box.replaceChildren(section);
+	renderSyncInfo();
 }
 
 function showChangePw() {
@@ -1534,15 +1590,22 @@ function showChangePw() {
 }
 
 async function doLogout() {
+	if (currentUser && engine) {
+		toast("saving your site data to your account");
+		await siteSync.sync();
+		if (syncState?.error && !confirm(`couldn't save site data to your account (${syncState.error}). log out anyway? anything not synced is cleared from this browser.`)) return;
+		siteSync.forget();
+		await engine.clearData();
+	}
 	try {
 		await fetch("/api/auth/logout", { method: "POST" });
 	} catch {}
 	currentUser = null;
-	renderAccount();
-	toast("logged out");
+	syncState = null;
+	location.href = "/";
 }
 
-fetchUser();
+const userReady = fetchUser();
 
 $("cfg-e1").addEventListener("change", async (e) => {
 	const kind = e.target.value;
@@ -1573,8 +1636,17 @@ $("clear-history").addEventListener("click", () => {
 	renderHistory();
 });
 $("clear-data").addEventListener("click", async () => {
-	if (!confirm("clear cookies, cache and storage for every proxied site? you'll be logged out everywhere.")) return;
+	const synced = !!currentUser;
+	if (!confirm(`clear cookies, cache and storage for every proxied site${synced ? ", here and in your account" : ""}? you'll be logged out everywhere.`)) return;
 	await engine?.clearData();
+	if (synced) {
+		try {
+			await siteSync.wipeRemote();
+		} catch (err) {
+			toast(`cleared here, but your account copy wasn't deleted: ${err.message}`, 5000);
+			return;
+		}
+	}
 	toast("proxied site data cleared");
 });
 $("about-link").addEventListener("click", () => openPanel("about"));
@@ -1691,6 +1763,7 @@ async function boot() {
 	}
 
 	if (engStatus) engStatus.hidden = true;
+	userReady.then(() => currentUser && siteSync.start());
 	(window.requestIdleCallback ?? setTimeout)(prefetchIcons, { timeout: 3000 });
 
 	const target = go ? resolveInput(go) : null;

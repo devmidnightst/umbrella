@@ -135,6 +135,7 @@ all in `.env.example` with comments. the important ones:
 | `WISP_MAX_FRAME_BYTES` | `4194304` | biggest websocket frame a client may send to `/wisp/` |
 | `TLS_ALLOWED_DOMAINS` | empty | who caddy may get certs for |
 | `UMBRELLA_DISABLE_PATCHES` | empty | `all` or a list of patch ids, for debugging |
+| `UMBRELLA_DATA_KEY` | generated | 64 hex chars (`openssl rand -hex 32`) that encrypt synced site data. unset, one is made at `data/site-data.key` on first boot. back it up with the database: lose it and every account's synced logins are gone |
 
 ## how it fits together
 
@@ -205,6 +206,7 @@ umbrella's own, in `public/js/plugins/umbrella-plugins.js`:
 - back, forward, reload, loading bar, open current page in a real browser tab, bookmark star.
 - bookmarks and history panels. everything is stored in localStorage and never leaves the browser.
 - settings: transport (libcurl or epoxy, switched live), search engine, ad blocking, custom wisp url, compat sites, developer toggles, clear data.
+- logged in, everything proxied sites keep (cookies, localStorage, indexeddb, so logins and web game saves) follows the account: it syncs on boot, every 3 minutes and when the page is hidden, and the account panel shows how much of the 512 MB cap is used. each unit (cookies per domain, localStorage per host, one indexeddb database) is gzipped in the browser and stored encrypted (aes-256-gcm) in the `site_data` table. one unit can be at most 48 MB, bigger ones stay in that browser. logging out saves, then clears it from that browser; "clear data" also empties the account copy. guests keep it in the browser like before. games from the games tab load straight from their own site, not through the proxy, so their saves can't be read and stay in the browser.
 - `ctrl+l` focuses the omnibox, `alt+t` opens a tab, `alt+w` closes one, `esc` closes panels.
 - mobile: under 640px the sidebar becomes a drawer behind the tab count button and the panel becomes a bottom sheet.
 - links like `/?go=https://example.com` open straight into the proxy as a new tab. the browser's address bar always stays on the bare site (`/`).
@@ -215,6 +217,7 @@ umbrella's own, in `public/js/plugins/umbrella-plugins.js`:
 ```sh
 npm test            # unit tests: patches, domain allowlist, server routes + headers
 npm run test:e2e    # real chromium, both transports
+npm run test:sync   # two browsers on one account: logins and saves follow it
 ```
 
 the e2e suite starts the server and a local fixture site, then loads the fixture through the proxy in headless chromium, once over epoxy and once over libcurl. the fixture checks:

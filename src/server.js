@@ -26,6 +26,7 @@ import { createWispHandler } from "./wisp.js";
 import { createAuthRouter, authMiddleware } from "./auth.js";
 import { createCaptchaRouter } from "./captcha.js";
 import { createAiRouter } from "./ai.js";
+import { createSiteDataRouter } from "./site-data.js";
 import { createFilterStore } from "./filters.js";
 
 const DIST = {
@@ -141,6 +142,7 @@ app.get("/sw.js", (req, res) => {
 app.use("/api/auth", createAuthRouter());
 app.use("/api/captcha", createCaptchaRouter());
 app.use("/api/ai", createAiRouter());
+app.use("/api/sitedata", createSiteDataRouter());
 
 // ---- api ----
 
