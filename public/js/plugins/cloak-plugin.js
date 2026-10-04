@@ -40,8 +40,9 @@ export class _CK extends ManagedPlugin {
 			}
 		}
 
-		const nativeKeys = Object.keys;
-		Object.defineProperty(Object, "keys", {
+		const O = win.Object;
+		const nativeKeys = O.keys;
+		O.defineProperty(O, "keys", {
 			value: function keys(obj) {
 				const result = nativeKeys.call(this, obj);
 				if (obj === win || obj === win.self) {
@@ -53,8 +54,8 @@ export class _CK extends ManagedPlugin {
 			configurable: true,
 		});
 
-		const nativeGetOwnNames = Object.getOwnPropertyNames;
-		Object.defineProperty(Object, "getOwnPropertyNames", {
+		const nativeGetOwnNames = O.getOwnPropertyNames;
+		O.defineProperty(O, "getOwnPropertyNames", {
 			value: function getOwnPropertyNames(obj) {
 				const result = nativeGetOwnNames.call(this, obj);
 				if (obj === win || obj === win.self) {
@@ -66,8 +67,8 @@ export class _CK extends ManagedPlugin {
 			configurable: true,
 		});
 
-		const nativeGetOwnDesc = Object.getOwnPropertyDescriptor;
-		Object.defineProperty(Object, "getOwnPropertyDescriptor", {
+		const nativeGetOwnDesc = O.getOwnPropertyDescriptor;
+		O.defineProperty(O, "getOwnPropertyDescriptor", {
 			value: function getOwnPropertyDescriptor(obj, prop) {
 				if ((obj === win || obj === win.self) && shouldHide(prop)) {
 					return undefined;

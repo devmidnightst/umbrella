@@ -234,6 +234,15 @@ export function createServer() {
 function main() {
 	const server = createServer();
 
+	// without this a taken port is an uncaught error and pm2 restarts the worker
+	// forever with a bare stack trace, which is what the 502s looked like
+	server.on("error", (err) => {
+		if (err.code === "EADDRINUSE")
+			console.error(`[umbrella] port ${config.port} is already in use by another app (pm2 ls, ss -ltnp). set PORT in the pm2 config or stop the other app`);
+		else console.error("[umbrella] server failed to start", err);
+		process.exit(1);
+	});
+
 	server.listen(config.port, config.host, () => {
 		const where = `http://${config.host === "0.0.0.0" ? "localhost" : config.host}:${config.port}`;
 		console.log(`[umbrella] ${config.brand.name} listening on ${where}`);

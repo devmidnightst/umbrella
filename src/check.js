@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import {
 	buildPatchedScramjet,
 	buildPatchedControllerInject,
@@ -20,6 +21,34 @@ const bad = (msg) => {
 };
 
 console.log("umbrella install check\n");
+
+const nodeMajor = Number(process.versions.node.split(".")[0]);
+nodeMajor >= 22 ? ok(`node ${process.versions.node}`) : bad(`node ${process.versions.node} is too old, umbrella needs node 22 or newer`);
+
+// native modules built for another node version crash every worker on boot,
+// so load them here where the error is readable
+const require = createRequire(import.meta.url);
+try {
+	const Database = require("better-sqlite3");
+	new Database(":memory:").close();
+	ok("better-sqlite3 loads");
+} catch (err) {
+	bad(`better-sqlite3 does not load (${err.message.split("\n")[0]}), run npm ci again`);
+}
+try {
+	const { db } = await import("./db.js");
+	db.prepare("CREATE TABLE IF NOT EXISTS _check (x)").run();
+	db.prepare("DROP TABLE _check").run();
+	ok(`database ${db.name} is writable`);
+} catch (err) {
+	bad(`database can't be opened for writing (${err.message}). check who owns the data folder, it must be the user pm2 runs as`);
+}
+try {
+	require("bcrypt").hashSync("x", 4);
+	ok("bcrypt loads");
+} catch (err) {
+	bad(`bcrypt does not load (${err.message.split("\n")[0]}), run npm ci again`);
+}
 
 const sj = version("@mercuryworkshop/scramjet");
 sj === SCRAMJET_VERSION ? ok(`scramjet ${sj}`) : bad(`scramjet is ${sj}, patches target ${SCRAMJET_VERSION}`);

@@ -55,7 +55,7 @@ nocturne-engine/
 
 ## setup
 
-needs node 20.11 or newer (22 lts is what it was tested on).
+needs node 22 or newer (better-sqlite3 and crypto-random-string refuse anything older).
 
 ```sh
 git clone https://github.com/devmidnightst/nocturne-engine.git
@@ -63,7 +63,7 @@ cd nocturne-engine
 npm ci
 cp .env.example .env      # optional, defaults are fine for local dev
 npm run check             # verifies versions and that every patch applies
-npm start                 # http://127.0.0.1:8080
+npm start                 # http://127.0.0.1:8090
 ```
 
 `npm run dev` restarts on file changes.
@@ -93,7 +93,7 @@ git pull && npm ci --omit=dev && npm run check && pm2 reload ecosystem.config.cj
 
 `pm2 reload` is zero downtime. every worker calls `process.send("ready")` once it's listening (`wait_ready`), so pm2 only kills the old worker after the new one is up. on shutdown a worker stops taking connections and gives open wisp tunnels a few seconds before exiting.
 
-cluster mode is safe. a wisp websocket stays on whichever worker accepted it, and all proxy state (cookies, cache, rewriting) lives in the browser, so there's nothing to share between workers. `UMBRELLA_INSTANCES` sets the worker count (default `max`). on the 12 core gcore box, something like 8 leaves room for caddy.
+cluster mode is safe. a wisp websocket stays on whichever worker accepted it, and all proxy state (cookies, cache, rewriting) lives in the browser, so there's nothing to share between workers. `UMBRELLA_INSTANCES` sets the worker count (default 4, `max` means one per core).
 
 ### coming from nocturne engine
 
@@ -125,7 +125,7 @@ all in `.env.example` with comments. the important ones:
 
 | env | default | what it does |
 | --- | --- | --- |
-| `HOST` / `PORT` | `127.0.0.1` / `8080` | keep it on loopback behind caddy |
+| `HOST` / `PORT` | `127.0.0.1` / `8090` | keep it on loopback behind caddy |
 | `TRUST_PROXY` | `loopback` | trusts x-forwarded-for from caddy only |
 | `WISP_ALLOW_PRIVATE_IPS` | `false` | leave off. stops the proxy reaching your vps, homelab or cloud metadata |
 | `WISP_ALLOW_LOOPBACK_IPS` | `false` | same, for 127.0.0.0/8 and ::1 |

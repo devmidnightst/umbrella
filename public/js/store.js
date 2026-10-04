@@ -123,38 +123,40 @@ try {
 	localStorage.removeItem(PREFIX + "tabs");
 } catch {}
 
+try {
+	sessionStorage.removeItem(PREFIX + "tabs");
+} catch {
+}
 export const session = {
 	load() {
-		try {
-			const raw = sessionStorage.getItem(PREFIX + "tabs");
-			return raw == null ? null : JSON.parse(raw);
-		} catch {
-			return null;
-		}
+		return read("lasttabs", null);
 	},
 	save(data) {
-		try {
-			sessionStorage.setItem(PREFIX + "tabs", JSON.stringify(data));
-		} catch {
-		}
+		write("lasttabs", data);
 	},
 };
 
 const ICON_LIMIT = 150;
 
+let iconCache = null;
+addEventListener("storage", (e) => {
+	if (e.key === null || e.key === PREFIX + "icons") iconCache = null;
+});
 export const icons = {
 	all() {
-		return read("icons", {});
+		iconCache ??= read("icons", {});
+		return iconCache;
 	},
 	get(host) {
 		return this.all()[host] ?? null;
 	},
 	set(host, src, data) {
-		const map = this.all();
+		const map = { ...this.all() };
 		delete map[host];
 		map[host] = { src, data };
 		const keys = Object.keys(map);
 		for (const k of keys.slice(0, Math.max(0, keys.length - ICON_LIMIT))) delete map[k];
+		iconCache = map;
 		write("icons", map);
 	},
 };
