@@ -1,7 +1,6 @@
 # umbrella
 
-a scramjet 2.x web proxy with a patched rewriter, a plain ui and a node server that's ready for pm2 cluster mode behind caddy.
-
+umbrella is a state-of-the-art web unblocker utilizing a patched scramjet 2.0.67.alpha.2 web proxy with a patched rewriter, it has a simplified UI for easy access, and is a node server thats ready for pm2 clustering behind caddy
 it's built on the pinned 2.x packages (scramjet `2.0.67-alpha.2`, scramjet-controller `0.0.14`, scramjet-utils `0.0.3`), with epoxy and libcurl both selectable in settings, and wisp-js serving the tunnel from the same express process.
 
 what makes it better than the stock scramjet demos:
